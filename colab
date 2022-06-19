@@ -1,0 +1,247 @@
+#Gpu management
+!nvidia-smi
+
+import os 
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"]="true"
+
+
+#Install required libraries
+!pip install matplotlib==3.2.2
+
+
+!pip install matplotlib-venn
+
+
+!pip install hazm
+!pip install stopwords_guilannlp
+
+
+import numpy as np
+import pandas as pd
+import codecs
+from google.colab import files
+#Keras
+from keras import optimizers
+from keras.models import Model, Sequential
+from keras.layers import Dense, Input, Embedding, Dropout
+from keras.layers import GlobalMaxPool1D, MaxPooling1D, GlobalMaxPooling1D
+from keras.layers import CuDNNLSTM, LSTM, Bidirectional
+from keras.layers.convolutional import Conv1D
+from keras.utils.np_utils import to_categorical
+from keras.metrics import categorical_accuracy
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+#Preprocessing
+from stopwords_guilannlp import stopwords_output
+from hazm import *
+#Visualization
+%matplotlib inline
+import matplotlib.pyplot as plt
+#from keras.utils import plot_model
+from keras.utils.vis_utils import plot_model
+#Measuring metrics
+from sklearn.metrics import f1_score
+
+
+
+#اتصال کولب و گوگل درایو 
+
+from google.colab import drive
+drive.mount ('/content/gdrive')
+
+
+
+#Import & Analyze trainset
+
+trainset = pd.read_csv('/content/gdrive/MyDrive/LSTM/persian_news/train.csv', encoding="utf-8", sep='\t', header='infer')
+trainset
+
+
+sentence_train = trainset['content']
+label_train = trainset['label_id']
+
+print('Number of training sentence: ', sentence_train.shape)
+print('Number of training label: ', label_train.shape)
+
+
+#See the data number of sentence in each category
+from collections import Counter
+cnt = Counter(label_train)
+cnt = dict(cnt)
+print(cnt)
+
+
+labels = list(cnt.keys())
+sizes = list(cnt.values())
+colors = ['#3fba36', '#66b3ff','#ffcc99','#ff9999', '#d44444', '#ffff00', '#800080', '#0000CD']
+fig1, ax1 = plt.subplots()
+ax1.pie(sizes, labels=labels, colors=colors,
+        autopct='%1.1f%%', startangle=180)
+#draw circle
+centre_circle = plt.Circle((0,0),0.90,fc='white')
+fig = plt.gcf()
+fig.gca().add_artist(centre_circle)
+# Equal aspect ratio ensures that pie is drawn as a circle
+ax1.axis('equal')  
+plt.tight_layout()
+# Decomment following line if you want to save the figure
+plt.savefig('distribution.png')
+plt.show()
+
+
+#Convert dataframes to numpy arrays
+sentence_train = np.asarray(sentence_train)
+label_train = np.asarray(label_train)
+
+
+#Prepare labels for categorical prediction
+categorical_label_train = to_categorical(label_train, 8)
+categorical_label_train
+
+#Preprocessing
+
+
+import re
+normalizer = Normalizer()
+lemmatizer = Lemmatizer()
+stemmer = Stemmer()
+# turn a doc into clean tokens
+def clean_data(doc):
+    doc = normalizer.normalize(doc) # Normalize document using Hazm Normalizer
+    tokenized = word_tokenize(doc)  # Tokenize text
+   
+    tokens = []
+    for token in tokenized:
+      token = re.sub("[،:.,;()/+]", " ", token) 
+      token = re.sub(r"\!+","!", token)
+      token = re.sub(r"\؟+","؟", token)
+      token = re.sub(r"\u200c", " ", token)
+      tokens.append(token)
+
+    tokens = [w for w in tokens if not len(w) <= 1] # single character removal 
+    tokens = [w for w in tokens if not w.isdigit()] # digit remove
+    tokens = [lemmatizer.lemmatize(w) for w in tokens] # Lemmatize sentence words using Hazm Lemmatizer
+    tokens = [stemmer.stem(w) for w in tokens] 
+    tokens = ' '.join(tokens)
+    return tokens
+    
+    
+    #Apply preprocessing step to training data
+train_docs = np.empty_like(sentence_train)
+for index, document in enumerate(sentence_train):
+  train_docs[index] = clean_data(document)
+  
+  
+  num_words = 2000
+
+#Create the tokenizer
+tokenizer = Tokenizer(num_words=num_words)
+
+#fit the tokenizer on the training documents
+tokenizer.fit_on_texts(train_docs)
+
+#Embed training sequences
+encoded_docs = tokenizer.texts_to_sequences(train_docs)
+#print(encoded_docs)
+
+
+
+#Find maximum length of training sentences
+max_length = max([len(s.split()) for s in train_docs])
+max_length
+
+
+#Pad embeded training sequences
+x_train_padded = pad_sequences(encoded_docs, maxlen=max_length, padding='post')
+x_train_padded[1]
+
+
+#Define vocabulary size (largest integer value)
+vocab_size = len(tokenizer.word_index)
+vocab_size
+
+
+Deep Learning Models
+
+LSTM Model
+model_lstm2 = Sequential()
+model_lstm2.add(Embedding(vocab_size, 150, input_length=max_length))
+model_lstm2.add(LSTM(150, return_sequences=True, name='lstm_layer'))
+model_lstm2.add(GlobalMaxPool1D())
+model_lstm2.add(Dropout(0.25))
+model_lstm2.add(Dense(150, activation="relu"))
+model_lstm2.add(Dropout(0.2))
+model_lstm2.add(Dense(8, activation='softmax'))
+model_lstm2.compile(loss='categorical_crossentropy',
+              optimizer='adam',
+              metrics=["categorical_accuracy"])
+​
+model_lstm2.summary()
+batch_size_lstm = 64
+epochs_lstm = 14
+
+
+
+#Train model
+
+hist_lstm2 = model_lstm2.fit(x_train_padded, categorical_label_train,
+                             batch_size=batch_size_lstm, epochs=epochs_lstm, shuffle=True, validation_split=0.33 )
+                             
+                             
+#Read test data
+
+testset = pd.read_csv('/content/gdrive/MyDrive/LSTM/persian_news/test.csv', encoding="utf-8", sep='\t', header='infer')
+testset
+
+
+x_test = testset['content']
+y_test = testset['label_id']
+labelTitel = testset['label']
+print('Number of testing sentence: ', x_test.shape)
+print('Number of testing label: ', y_test.shape)
+
+
+#See the testdata number of sentence in each category
+from collections import Counter
+cnt1 = Counter(labelTitel)
+cnt1 = dict(cnt1)
+print(cnt1)
+
+from collections import Counter
+cnt2 = Counter(y_test)
+cnt2 = dict(cnt2)
+print(cnt2)
+
+
+#Convert dataframes to numpy arrays for testData
+x_test = np.asarray(x_test)
+y_test = np.asarray(y_test)
+
+
+#Applying preprocessing step to test data
+test_docs = np.empty_like(x_test)
+for index, document in enumerate(x_test):
+  test_docs[index] = clean_data(document)
+  
+  #Embed testing sequences
+encoded_docs = tokenizer.texts_to_sequences(test_docs)
+#Pad testing sequences
+x_test_padded = pad_sequences(encoded_docs, maxlen=max_length, padding='post')
+
+
+#Prepare labels of testset for categorical prediction
+categorical_y_test = to_categorical(y_test, 8)
+
+
+#Evaluate model
+loss_lstm2, acc_lstm2 = model_lstm2.evaluate(x_test_padded, categorical_y_test, verbose=1)
+print('Test Accuracy: %f' % (acc_lstm2*100))
+
+
+
+
+
+                             
+
+
+
